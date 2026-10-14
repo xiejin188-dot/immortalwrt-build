@@ -1,0 +1,107 @@
+name: Build ImmortalWrt 25.12 x86_64 Safe
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  REPO_BRANCH: immortalwrt-25.12
+  CONFIG_FILE: x86_64_25.12_full_safe.config
+  TARGET: x86
+  SUBTARGET: 64
+  PROFILE: generic
+  BUILD_CORES: 2
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Increase swap memory
+        run: |
+          sudo fallocate -l 4G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
+      - name: Install build dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev autoconf git curl wget python3 python3-pip unzip rsync zstd
+
+      - name: Cache download source
+        uses: actions/cache@v4
+        with:
+          path: openwrt/dl
+          key: openwrt-dl-${{ env.REPO_BRANCH }}
+          restore-keys: |
+            openwrt-dl-${{ env.REPO_BRANCH }}
+
+      - name: Clone ImmortalWrt source
+        run: |
+          git clone https://github.com/immortalwrt/immortalwrt.git --depth 1 -b ${{ env.REPO_BRANCH }} openwrt
+
+      - name: Add custom feeds for third-party plugins
+        run: |
+          cd openwrt
+          {
+            echo 'src-git thunder https://github.com/immortalwrt/luci-app-thunder.git'
+            echo 'src-git wechatpush https://github.com/tty228/luci-app-wechatpush.git'
+          } >> feeds.conf.default
+          set -o pipefail
+          echo "==== feeds update -a ====" 2>&1 | tee ../feeds_log.txt
+          ./scripts/feeds update -a 2>&1 | tee -a ../feeds_log.txt
+          echo "==== feeds install -a ====" 2>&1 | tee -a ../feeds_log.txt
+          ./scripts/feeds install -a 2>&1 | tee -a ../feeds_log.txt
+
+      - name: Import config
+        run: |
+          cp ${{ env.CONFIG_FILE }} openwrt/.config
+          cd openwrt
+          export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
+          make defconfig
+          echo "===== config diff ====="
+          diff ../${{ env.CONFIG_FILE }} .config > config_diff.txt || true
+          cat config_diff.txt
+
+      - name: Download source code
+        run: |
+          cd openwrt
+          make download -j${{ env.BUILD_CORES }}
+
+      - name: Compile firmware
+        run: |
+          cd openwrt
+          export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
+          set -o pipefail
+          make -j${{ env.BUILD_CORES }} 2>&1 | tee ../build_log.txt
+
+      - name: Generate SHA256 Checksum
+        run: |
+          cd openwrt/bin/targets/${{ env.TARGET }}/${{ env.SUBTARGET }}
+          sha256sum *.img.gz > sha256sums.txt
+          cat sha256sums.txt
+
+      - name: Save all error logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: All-Build-Error-Logs
+          path: |
+            feeds_log.txt
+            build_log.txt
+            openwrt/config_diff.txt
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImmortalWrt-25.12-x86_64-Safe-Firmware
+          path: |
+            openwrt/bin/targets/${{ env.TARGET }}/${{ env.SUBTARGET }}/*.img.gz
+            openwrt/bin/targets/${{ env.TARGET }}/${{ env.SUBTARGET }}/sha256sums.txt
+          retention-days: 7
