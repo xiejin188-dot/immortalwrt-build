@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 env:
-  REPO_BRANCH: immortalwrt-25.12
+  REPO_BRANCH: openwrt-25.12
   CONFIG_FILE: x86_64_25.12_full_safe.config
   TARGET: x86
   SUBTARGET: 64
