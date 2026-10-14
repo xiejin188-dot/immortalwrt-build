@@ -36,13 +36,14 @@ jobs:
         run: |
           git clone https://github.com/immortalwrt/immortalwrt.git --depth 1 -b ${{ env.REPO_BRANCH }} openwrt
 
-      - name: Add custom feeds for third-party plugins
+      - name: Add third-party single packages
+        run: |
+          # 微信推送：单包仓库，直接放入 package 目录（不能用 src-git）
+          git clone --depth 1 https://github.com/tty228/luci-app-wechatpush.git openwrt/package/luci-app-wechatpush
+
+      - name: Update and install official feeds
         run: |
           cd openwrt
-          {
-            echo 'src-git thunder https://github.com/immortalwrt/luci-app-thunder.git'
-            echo 'src-git wechatpush https://github.com/tty228/luci-app-wechatpush.git'
-          } >> feeds.conf.default
           set -o pipefail
           echo "==== feeds update -a ====" 2>&1 | tee ../feeds_log.txt
           ./scripts/feeds update -a 2>&1 | tee -a ../feeds_log.txt
