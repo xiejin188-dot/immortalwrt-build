@@ -72,16 +72,27 @@ jobs:
           set -o pipefail
           make tools/install toolchain/install -j${{ env.BUILD_CORES }} 2>&1 | tee ../toolchain_log.txt
 
-      - name: Pre-build libffi serially (parallel-race workaround)
+      - name: Patch libffi 3.4.7 (fficonfig.h path fix)
+        run: |
+          cd openwrt
+          python3 - <<'PYEOF'
+          p = "feeds/packages/libs/libffi/Makefile"
+          s = open(p).read()
+          bad = "\t$(CP) \\\n\t\t$(PKG_BUILD_DIR)/$(GNU_TARGET_NAME)*/fficonfig.h \\\n\t\t$(1)/usr/include/\n"
+          assert s.count(bad) == 1, "libffi fficonfig.h cp block not found exactly once"
+          open(p, "w").write(s.replace(bad, ""))
+          print("libffi fficonfig.h path patch applied (matches upstream master)")
+          PYEOF
+          echo "==== patched Build/InstallDev ===="
+          sed -n '/define Build\/InstallDev/,/^endef/p' feeds/packages/libs/libffi/Makefile
+
+      - name: Pre-build libffi serially (verify fix)
         run: |
           cd openwrt
           export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
           set -o pipefail
-          # libffi 3.4.7 在新宿主并行构建下存在竞态（No rule to make target 'all-configured'），
-          # 关闭包内并行；并在顶层 -j1 串行单独编译 host+target，彻底规避竞态
+          # 串行单独编译 libffi（host+target），提前验证补丁是否生效；V=s 保留完整日志
           sed -i 's/^PKG_BUILD_PARALLEL:=1/PKG_BUILD_PARALLEL:=0/' feeds/packages/libs/libffi/Makefile
-          echo "==== libffi Makefile parallel flag ===="
-          grep -n "PKG_BUILD_PARALLEL" feeds/packages/libs/libffi/Makefile || true
           make package/libffi/compile -j1 V=s 2>&1 | tee ../libffi.log
 
       - name: Compile firmware
